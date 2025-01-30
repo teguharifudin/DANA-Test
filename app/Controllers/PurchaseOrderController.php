@@ -849,7 +849,7 @@ class PurchaseOrderController extends BaseController
         $email->setFrom('teguh.arifudin@gmail.com');
         $email->setTo($requestor['email']);
         $email->setCC($arrayEmail);
-        $email->setSubject('Purchase Approved - ' . $po['po_number']);
+        $email->setSubject('Purchase Approved - ' . $po['title']);
         
         $message = "
             <html>
@@ -900,7 +900,7 @@ class PurchaseOrderController extends BaseController
         $email->setFrom('teguh.arifudin@gmail.com');
         $email->setTo($requestor['email']);
         $email->setCC($arrayEmail);
-        $email->setSubject('Purchase Rejected - ' . $po['po_number']);
+        $email->setSubject('Purchase Rejected - ' . $po['title']);
         
         $message = "
             <html>
@@ -945,7 +945,7 @@ class PurchaseOrderController extends BaseController
         $email->setFrom('teguh.arifudin@gmail.com');
         $email->setTo($requestor['email']);
         $email->setCC($arrayEmail);
-        $email->setSubject('Purchase Completed - ' . $po['po_number']);
+        $email->setSubject('Purchase Completed - ' . $po['title']);
         
         $message = "
             <html>
