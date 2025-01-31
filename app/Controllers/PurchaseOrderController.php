@@ -72,6 +72,7 @@ class PurchaseOrderController extends BaseController
 
         $rules = [
             'title' => 'required|min_length[3]|max_length[255]',
+            'po_number' => 'permit_empty|max_length[50]|is_unique[purchase_orders.po_number,id,{id}]',
             'currency' => 'required|in_list[IDR,USD]',
             'total_amount' => 'required|numeric|greater_than[0]',
             'attachment' => [
@@ -90,119 +91,101 @@ class PurchaseOrderController extends BaseController
             ],
             'due_date' => 'required|valid_date[Y-m-d]',
             'statement_accepted' => 'required|in_list[on,1]'
-        ];                
+        ];
 
         if (!$this->validate($rules)) {
             return redirect()->back()
-                            ->with('error', $this->validator->getErrors())
-                            ->withInput();
+                ->with('error', $this->validator->getErrors())
+                ->withInput();
         }
 
         $userId = session()->get('id');
         if (!$userId) {
             return redirect()->back()
-                            ->with('error', 'User session not found')
-                            ->withInput();
+                ->with('error', 'User session not found')
+                ->withInput();
         }
-        
-        // $date = date('ym');
-        // $random = sprintf('%04d', mt_rand(1, 9999));
-        // $poNumber = "PO{$date}{$random}";
 
-        $data = [
+        try {
+            $data = $this->prepareData($userId);
+            $this->handleFileUploads($data);
+            
+            if (!$this->purchaseOrderModel->insert($data)) {
+                throw new \RuntimeException('Failed to insert data into database');
+            }
+
+            return redirect()->to('dashboard')
+                ->with('success', 'Purchase created successfully');
+
+        } catch (\Exception $e) {
+            log_message('error', '[PurchaseOrder] Create failed: ' . $e->getMessage());
+            $this->cleanupFiles($data);
+            
+            return redirect()->back()
+                ->with('error', 'Failed to create Purchase')
+                ->withInput();
+        }
+    }
+
+    private function prepareData($userId): array
+    {
+        return [
             'po_number' => $this->request->getPost('po_number') ?: null,
             'requestor_id' => $userId,
             'title' => trim($this->request->getPost('title')),
             'currency' => trim($this->request->getPost('currency')),
             'total_amount' => (float)$this->request->getPost('total_amount'),
             'notes' => trim($this->request->getPost('notes')),
-            'attachment' => null,
-            'attachment_type' => null,
             'notes2' => trim($this->request->getPost('notes2')),
             'due_date' => date('Y-m-d', strtotime($this->request->getPost('due_date'))),
             'status' => 'pending',
             'statement_accepted' => 1,
+            'attachment' => null,
+            'attachment_type' => null,
             'attachment2' => null,
             'attachment_type2' => null
-        ];        
+        ];
+    }
 
-        if ($this->request->getFile('attachment')->isValid()) {
-            $file = $this->request->getFile('attachment');
-            try {
-                $uploadPath = FCPATH . 'uploads/purchase_orders';
-                
-                if (!is_dir($uploadPath)) {
-                    mkdir($uploadPath, 0777, true);
-                }
+    private function handleFileUploads(array &$data): void
+    {
+        $uploadPath = FCPATH . 'uploads/purchase_orders';
+        
+        if (!is_dir($uploadPath)) {
+            mkdir($uploadPath, 0777, true);
+        }
 
-                chmod($uploadPath, 0777);
-
-                $newName = $file->getRandomName();
-                
-                if ($file->move($uploadPath, $newName)) {
-                    $data['attachment'] = $newName;
-                    $data['attachment_type'] = $file->getClientMimeType();
-                    $data['attachment_size'] = $file->getSize();
-                } else {
-                    throw new \RuntimeException('Failed to move uploaded file');
-                }
-
-            } catch (\Exception $e) {
-                log_message('error', '[FileUpload] Failed: ' . $e->getMessage());
-                return redirect()->back()
-                                ->with('error', 'File upload failed: ' . $e->getMessage())
-                                ->withInput();
+        $file = $this->request->getFile('attachment');
+        if ($file && $file->isValid()) {
+            $newName = $file->getRandomName();
+            if ($file->move($uploadPath, $newName)) {
+                $data['attachment'] = $newName;
+                $data['attachment_type'] = $file->getClientMimeType();
+                $data['attachment_size'] = $file->getSize();
             }
         }
 
-        if ($this->request->getFile('attachment2')->isValid()) {
-            $file2 = $this->request->getFile('attachment2');
-            try {
-                $uploadPath = FCPATH . 'uploads/purchase_orders';
-                
-                if (!is_dir($uploadPath)) {
-                    mkdir($uploadPath, 0777, true);
-                }
-
-                chmod($uploadPath, 0777);
-
-                $newName2 = $file2->getRandomName();
-                
-                if ($file2->move($uploadPath, $newName2)) {
-                    $data['attachment2'] = $newName2;
-                    $data['attachment_type2'] = $file2->getClientMimeType();
-                    $data['attachment_size2'] = $file2->getSize();
-                } else {
-                    throw new \RuntimeException('Failed to move second uploaded file');
-                }
-
-            } catch (\Exception $e) {
-                log_message('error', '[FileUpload2] Failed: ' . $e->getMessage());
-                return redirect()->back()
-                                ->with('error', 'Second file upload failed: ' . $e->getMessage())
-                                ->withInput();
+        $file2 = $this->request->getFile('attachment2');
+        if ($file2 && $file2->isValid()) {
+            $newName2 = $file2->getRandomName();
+            if ($file2->move($uploadPath, $newName2)) {
+                $data['attachment2'] = $newName2;
+                $data['attachment_type2'] = $file2->getClientMimeType();
+                $data['attachment_size2'] = $file2->getSize();
             }
         }
+    }
 
-        try {
-            $inserted = $this->purchaseOrderModel->insert($data);
-            if (!$inserted) {
-                throw new \RuntimeException('Failed to insert data into database');
-            }
-
-            return redirect()->to('dashboard')
-                            ->with('success', 'Purchase created successfully');
-
-        } catch (\Exception $e) {
-            log_message('error', '[PurchaseOrder] Create failed: ' . $e->getMessage());
-            
-            if (isset($newName) && file_exists($uploadPath . '/' . $newName)) {
-                unlink($uploadPath . '/' . $newName);
-            }
-
-            return redirect()->back()
-                            ->with('error', 'Failed to create Purchase')
-                            ->withInput();
+    private function cleanupFiles(array $data): void
+    {
+        $uploadPath = FCPATH . 'uploads/purchase_orders/';
+        
+        if (!empty($data['attachment'])) {
+            @unlink($uploadPath . $data['attachment']);
+        }
+        
+        if (!empty($data['attachment2'])) {
+            @unlink($uploadPath . $data['attachment2']);
         }
     }
 
